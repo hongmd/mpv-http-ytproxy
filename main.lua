@@ -1,12 +1,19 @@
 local function init()
+    local opts = mp.get_property_native("options/script-opts")
+    if opts and opts["http-ytproxy"] == "no" then
+        return
+    end
+
     local url = mp.get_property("stream-open-filename")
     -- check for youtube link
-    if url:find("^https:") == nil or url:find("youtu") == nil then
+    if url:find("^https:") == nil or (url:find("youtu") == nil and url:find("yewtu") == nil) then
         return
     end
 
     local proxy = mp.get_property("http-proxy")
-    if proxy and proxy ~= "" and proxy ~= "http://127.0.0.1:12081" then
+    local ytdl_raw_options = mp.get_property("ytdl-raw-options")
+    if (proxy and proxy ~= "" and proxy ~= "http://127.0.0.1:12081") or
+       (ytdl_raw_options and ytdl_raw_options:match("proxy=([^ ]+)")) then
         return
     end
 

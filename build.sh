@@ -13,8 +13,7 @@ cargo build --release
 # install lua script to mpv dir
 scriptdir=~/.config/mpv/scripts/http-ytproxy
 mkdir -p $scriptdir
-cp target/release/http-ytproxy $scriptdir/
-cp ytproxy.lua $scriptdir/main.lua
+cp -a -t $scriptdir target/release/http-ytproxy main.lua
 cd $scriptdir
 
 # generate private keys for mitm proxy (they don't matter)
