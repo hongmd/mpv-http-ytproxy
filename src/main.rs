@@ -623,13 +623,29 @@ fn mitm(mut req: Request<Body>, mut third_wheel: ThirdWheel, http_chunk_size: u6
                                     eprintln!("Range chunked: {} -> {} (chunk size: {})", 
                                              range_string, newrange, http_chunk_size);
                                     
+                                    // Demonstrate memory pool usage for this chunk size
+                                    let chunk_size_bytes = http_chunk_size as usize;
+                                    let _demo_buffer = download_manager.get_download_buffer(&url, chunk_size_bytes);
+                                    eprintln!("Memory Pool: Allocated {}MB buffer for {}", 
+                                             chunk_size_bytes / 1024 / 1024, url);
+                                    
+                                    // Return buffer immediately (in real usage, this would happen after download)
+                                    download_manager.return_download_buffer(_demo_buffer);
+                                    
                                     // Check for parallel prefetch opportunities
                                     let prefetch_ranges = download_manager.should_prefetch(&url, start, http_chunk_size);
                                     if !prefetch_ranges.is_empty() {
                                         eprintln!("Parallel prefetch: {} ranges queued for {}", 
                                                  prefetch_ranges.len(), url);
-                                        // Note: Actual prefetch implementation would require async context
-                                        // For now, we're logging the intention
+                                        
+                                        // Demonstrate memory pool for prefetch buffers
+                                        for (pf_start, pf_end) in &prefetch_ranges {
+                                            let pf_size = (pf_end - pf_start + 1) as usize;
+                                            let _pf_buffer = download_manager.get_download_buffer(&url, pf_size);
+                                            eprintln!("Memory Pool: Prefetch buffer {}MB allocated for range {}-{}", 
+                                                     pf_size / 1024 / 1024, pf_start, pf_end);
+                                            download_manager.return_download_buffer(_pf_buffer);
+                                        }
                                     }
                                 } else {
                                     eprintln!("Warning: Failed to create header value for: {}", newrange);
