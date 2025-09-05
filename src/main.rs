@@ -37,24 +37,52 @@ fn mitm(mut req: Request<Body>, mut third_wheel: ThirdWheel, http_chunk_size: u6
     if let Some(val) = hdr.get("Range") {
         // Safely convert header value to string and clone it to avoid borrow issues
         if let Ok(range) = val.to_str() {
-            let range_string = range.to_string(); // Clone to avoid borrow checker issues
+            let range_string = range.to_string();
+            
+            // Parse Range header: bytes=start-end or bytes=start-
             if range_string.starts_with("bytes=") {
-                if let Some((start_str, _end_str)) = range_string[6..].split_once('-') {
+                let range_part = &range_string[6..]; // Remove "bytes=" prefix
+                
+                if let Some((start_str, end_str)) = range_part.split_once('-') {
                     if let Ok(start) = start_str.parse::<u64>() {
-                        // Check for overflow before addition
-                        if let Some(end) = start.checked_add(http_chunk_size) {
-                            let newrange = format!("bytes={}-{}", start, end.saturating_sub(1));
-                            // Safely create header value
-                            if let Ok(header_val) = HeaderValue::from_str(&newrange) {
-                                hdr.insert("Range", header_val);
-                                eprintln!("Range modified: {} -> {}", range_string, newrange);
+                        // Determine if we should modify this range
+                        let should_modify = if end_str.is_empty() {
+                            // Open-ended range like "bytes=0-" - always modify
+                            true
+                        } else if let Ok(end) = end_str.parse::<u64>() {
+                            // Closed range like "bytes=0-1023" - only modify if range is larger than chunk size
+                            let current_size = end.saturating_sub(start).saturating_add(1);
+                            current_size > http_chunk_size
+                        } else {
+                            // Invalid end value - skip
+                            false
+                        };
+                        
+                        if should_modify {
+                            // Calculate new end position
+                            if let Some(new_end) = start.checked_add(http_chunk_size) {
+                                let new_end_byte = new_end.saturating_sub(1);
+                                let newrange = format!("bytes={}-{}", start, new_end_byte);
+                                
+                                // Safely create header value
+                                if let Ok(header_val) = HeaderValue::from_str(&newrange) {
+                                    hdr.insert("Range", header_val);
+                                    eprintln!("Range chunked: {} -> {} (chunk size: {})", 
+                                             range_string, newrange, http_chunk_size);
+                                } else {
+                                    eprintln!("Warning: Failed to create header value for: {}", newrange);
+                                }
                             } else {
-                                eprintln!("Warning: Failed to create header value for: {}", newrange);
+                                eprintln!("Warning: Range overflow detected, skipping modification");
                             }
                         } else {
-                            eprintln!("Warning: Range overflow detected, skipping modification");
+                            eprintln!("Range unchanged: {} (already optimal)", range_string);
                         }
+                    } else {
+                        eprintln!("Warning: Invalid start value in Range header: {}", range_string);
                     }
+                } else {
+                    eprintln!("Warning: Malformed Range header: {}", range_string);
                 }
             }
         } else {
