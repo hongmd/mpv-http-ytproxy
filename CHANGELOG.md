@@ -15,6 +15,8 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 - Default `chunk_size` set to 10MB for optimal balance of performance and bandwidth
+- **HTTP/2 enabled by default** for better streaming performance
+- **Removed compression setting** (unnecessary for pre-compressed video content)
 - Config files now use human-readable format by default
 - Improved config generation with user-friendly size examples
 

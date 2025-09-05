@@ -21,7 +21,6 @@ log_timing = true
 http2 = true
 connection_pool_size = 10
 request_timeout = 30
-enable_compression = true
 
 # Supported size formats:
 # - Numbers: 1024, 52428800

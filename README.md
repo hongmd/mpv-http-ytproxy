@@ -125,10 +125,9 @@ level = "info"               # error, warn, info, debug
 log_timing = false
 
 [performance]
-http2 = false                # Future feature
+http2 = true                 # HTTP/2 enabled by default
 connection_pool_size = 10
 request_timeout = 30
-enable_compression = false   # Future feature
 ```
 
 ### mpv.conf Options

@@ -117,14 +117,12 @@ struct LoggingConfig {
 
 #[derive(Debug, Deserialize, Serialize)]
 struct PerformanceConfig {
-    #[serde(default)]
+    #[serde(default = "default_http2")]
     http2: bool,
     #[serde(default = "default_connection_pool_size")]
     connection_pool_size: u32,
     #[serde(default = "default_request_timeout")]
     request_timeout: u64,
-    #[serde(default)]
-    enable_compression: bool,
 }
 
 // Default value functions
@@ -138,6 +136,7 @@ fn default_cert_validity_days() -> u32 { 365 }
 fn default_log_level() -> String { "info".to_string() }
 fn default_connection_pool_size() -> u32 { 10 }
 fn default_request_timeout() -> u64 { 30 }
+fn default_http2() -> bool { true } // Enable HTTP/2 by default for better performance
 
 impl Default for ProxyConfig {
     fn default() -> Self {
@@ -175,10 +174,9 @@ impl Default for LoggingConfig {
 impl Default for PerformanceConfig {
     fn default() -> Self {
         Self {
-            http2: false,
+            http2: default_http2(),
             connection_pool_size: default_connection_pool_size(),
             request_timeout: default_request_timeout(),
-            enable_compression: false,
         }
     }
 }
@@ -281,10 +279,9 @@ level = "info"
 log_timing = false
 
 [performance]
-http2 = false
+http2 = true             # HTTP/2 enabled by default for better performance
 connection_pool_size = 10
 request_timeout = 30
-enable_compression = false
 
 # Size Format Examples:
 # - Numbers: 1024, 10485760 

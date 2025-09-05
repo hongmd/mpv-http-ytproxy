@@ -18,10 +18,9 @@ level = "info"
 log_timing = false
 
 [performance]
-http2 = false
+http2 = true             # HTTP/2 enabled by default for better performance
 connection_pool_size = 10
 request_timeout = 30
-enable_compression = false
 
 # Size Format Examples:
 # - Numbers: 1024, 10485760 
