@@ -9,7 +9,7 @@ use std::time::Instant;
 use third_wheel::hyper::http::HeaderValue;
 use third_wheel::hyper::service::Service;
 use third_wheel::hyper::{Body, Request};
-use third_wheel::*;
+use third_wheel::{mitm_layer, CertificateAuthority, MitmProxy, ThirdWheel};
 
 // Custom deserializer for human-readable sizes (e.g., "10MB", "50MB", "1GB")
 fn deserialize_size<'de, D>(deserializer: D) -> Result<u64, D::Error>
@@ -38,43 +38,33 @@ fn parse_size(input: &str) -> Result<u64, String> {
         return Ok(num);
     }
 
-    let (number_part, unit_part) = if input.ends_with("KB") {
-        (input.trim_end_matches("KB"), "KB")
-    } else if input.ends_with("MB") {
-        (input.trim_end_matches("MB"), "MB")
-    } else if input.ends_with("GB") {
-        (input.trim_end_matches("GB"), "GB")
-    } else if input.ends_with("TB") {
-        (input.trim_end_matches("TB"), "TB")
-    } else if input.ends_with("K") {
-        (input.trim_end_matches("K"), "K")
-    } else if input.ends_with("M") {
-        (input.trim_end_matches("M"), "M")
-    } else if input.ends_with("G") {
-        (input.trim_end_matches("G"), "G")
-    } else if input.ends_with("T") {
-        (input.trim_end_matches("T"), "T")
-    } else {
-        return Err(format!(
-            "Invalid size format: {}. Use formats like '10MB', '50MB', '1GB'",
-            input
-        ));
-    };
+    // More efficient unit parsing with compile-time constants
+    const UNITS: &[(&str, u64)] = &[
+        ("TB", 1_024_u64.pow(4)),
+        ("GB", 1_024_u64.pow(3)),
+        ("MB", 1_024_u64.pow(2)),
+        ("KB", 1_024),
+        ("T", 1_024_u64.pow(4)),
+        ("G", 1_024_u64.pow(3)),
+        ("M", 1_024_u64.pow(2)),
+        ("K", 1_024),
+    ];
 
-    let number: f64 = number_part
-        .trim()
-        .parse()
-        .map_err(|_| format!("Invalid number in size: {}", input))?;
+    for (unit, multiplier) in UNITS {
+        if let Some(number_str) = input.strip_suffix(unit) {
+            let number: f64 = number_str
+                .trim()
+                .parse()
+                .map_err(|_| format!("Invalid number in size: {}", input))?;
 
-    let multiplier = match unit_part {
-        "KB" | "K" => 1_024,
-        "MB" | "M" => 1_024 * 1_024,
-        "GB" | "G" => 1_024 * 1_024 * 1_024,
-        "TB" | "T" => 1_024_u64.pow(4),
-        _ => return Err(format!("Unknown unit: {}", unit_part)),
-    };
+            return Ok((number * *multiplier as f64) as u64);
+        }
+    }
 
-    Ok((number * multiplier as f64) as u64)
+    Err(format!(
+        "Invalid size format: {}. Use formats like '10MB', '50MB', '1GB'",
+        input
+    ))
 }
 
 #[derive(Debug, Deserialize, Serialize, Default)]
@@ -150,51 +140,76 @@ struct PerformanceConfig {
     request_timeout: u64,
 }
 
-// Default value functions
+// Constants for better performance and maintainability
+const DEFAULT_PORT: u16 = 8080;
+const DEFAULT_CHUNK_SIZE: u64 = 10 * 1024 * 1024; // 10MB
+const DEFAULT_MIN_CHUNK_SIZE: u64 = 2_621_440; // 2.5MB
+const DEFAULT_MAX_CHUNK_SIZE: u64 = 40 * 1024 * 1024; // 40MB
+const DEFAULT_CERT_VALIDITY_DAYS: u32 = 365;
+const DEFAULT_CONNECTION_POOL_SIZE: u32 = 10;
+const DEFAULT_REQUEST_TIMEOUT: u64 = 30;
+const DEFAULT_MAX_CONCURRENT_CHUNKS: u32 = 2;
+const DEFAULT_PREFETCH_AHEAD: u64 = 20 * 1024 * 1024; // 20MB
+
+// Default value functions using constants (with inlining for better performance)
+#[inline]
 fn default_port() -> u16 {
-    8080
+    DEFAULT_PORT
 }
+#[inline]
 fn default_chunk_size() -> u64 {
-    10485760
-} // 10MB
+    DEFAULT_CHUNK_SIZE
+}
+#[inline]
 fn default_cert_file() -> String {
     "cert.pem".to_string()
 }
+#[inline]
 fn default_key_file() -> String {
     "key.pem".to_string()
 }
+#[inline]
 fn default_min_chunk_size() -> u64 {
-    2621440
-} // 2.5MB
-fn default_max_chunk_size() -> u64 {
-    41943040
-} // 40MB
-fn default_cert_validity_days() -> u32 {
-    365
+    DEFAULT_MIN_CHUNK_SIZE
 }
+#[inline]
+fn default_max_chunk_size() -> u64 {
+    DEFAULT_MAX_CHUNK_SIZE
+}
+#[inline]
+fn default_cert_validity_days() -> u32 {
+    DEFAULT_CERT_VALIDITY_DAYS
+}
+#[inline]
 fn default_log_level() -> String {
     "info".to_string()
 }
+#[inline]
 fn default_connection_pool_size() -> u32 {
-    10
+    DEFAULT_CONNECTION_POOL_SIZE
 }
+#[inline]
 fn default_request_timeout() -> u64 {
-    30
+    DEFAULT_REQUEST_TIMEOUT
 }
+#[inline]
 fn default_http2() -> bool {
     true
 } // Enable HTTP/2 by default for better performance
+#[inline]
 fn default_max_concurrent_chunks() -> u32 {
-    2
-} // Conservative parallel downloads
+    DEFAULT_MAX_CONCURRENT_CHUNKS
+}
+#[inline]
 fn default_prefetch_ahead() -> u64 {
-    20971520
-} // 20MB prefetch buffer
+    DEFAULT_PREFETCH_AHEAD
+}
+#[inline]
 fn default_memory_pool_enabled() -> bool {
     true
 } // Enable memory pooling by default
 
-// Memory Pool Management for efficient buffer reuse
+// Memory Pool Management for efficient buffer reuse with optimized locking
 #[derive(Debug)]
 struct BufferPool {
     available_buffers: Arc<Mutex<VecDeque<Vec<u8>>>>,
