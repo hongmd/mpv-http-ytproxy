@@ -11,7 +11,7 @@
 
 [package]
 name = "http-ytproxy"
-version = "0.6.0"
+version = "0.6.2"
 edition = "2021"
 authors = ["mpv-http-ytproxy contributors"]
 description = "HTTP MITM proxy for optimizing YouTube streaming in mpv with memory pool management and parallel downloads"
