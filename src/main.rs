@@ -3,6 +3,8 @@ use serde::{Deserialize, Serialize, Deserializer};
 use std::env;
 use std::fs;
 use std::path::Path;
+use std::sync::{Arc, Mutex};
+use std::collections::HashMap;
 use third_wheel::hyper::{Request, Body};
 use third_wheel::hyper::http::HeaderValue;
 use third_wheel::hyper::service::Service;
@@ -97,6 +99,12 @@ struct ProxyConfig {
     min_chunk_size: u64,
     #[serde(default = "default_max_chunk_size", deserialize_with = "deserialize_size")]
     max_chunk_size: u64,
+    #[serde(default)]
+    parallel_downloads: bool,
+    #[serde(default = "default_max_concurrent_chunks")]
+    max_concurrent_chunks: u32,
+    #[serde(default = "default_prefetch_ahead", deserialize_with = "deserialize_size")]
+    prefetch_ahead: u64,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -137,6 +145,74 @@ fn default_log_level() -> String { "info".to_string() }
 fn default_connection_pool_size() -> u32 { 10 }
 fn default_request_timeout() -> u64 { 30 }
 fn default_http2() -> bool { true } // Enable HTTP/2 by default for better performance
+fn default_max_concurrent_chunks() -> u32 { 2 } // Conservative parallel downloads
+fn default_prefetch_ahead() -> u64 { 20971520 } // 20MB prefetch buffer
+
+// Parallel download manager for intelligent prefetching
+#[derive(Debug)]
+struct ParallelDownloadManager {
+    active_downloads: Arc<Mutex<HashMap<String, Vec<(u64, u64)>>>>, // URL -> [(start, end), ...]
+    max_concurrent: u32,
+    prefetch_size: u64,
+    enabled: bool,
+}
+
+impl ParallelDownloadManager {
+    fn new(max_concurrent: u32, prefetch_size: u64, enabled: bool) -> Self {
+        Self {
+            active_downloads: Arc::new(Mutex::new(HashMap::new())),
+            max_concurrent,
+            prefetch_size,
+            enabled,
+        }
+    }
+
+    fn should_prefetch(&self, url: &str, start: u64, chunk_size: u64) -> Vec<(u64, u64)> {
+        if !self.enabled {
+            return vec![];
+        }
+
+        let mut active = self.active_downloads.lock().unwrap();
+        let downloads = active.entry(url.to_string()).or_insert_with(Vec::new);
+        
+        // Check if we should prefetch next chunks
+        let mut prefetch_ranges = Vec::new();
+        let current_end = start + chunk_size;
+        
+        // Calculate how many chunks to prefetch ahead
+        let chunks_to_prefetch = (self.prefetch_size / chunk_size).min(self.max_concurrent as u64 - 1);
+        
+        for i in 1..=chunks_to_prefetch {
+            let prefetch_start = current_end + (i - 1) * chunk_size;
+            let prefetch_end = prefetch_start + chunk_size - 1;
+            
+            // Check if this range is not already being downloaded
+            let already_downloading = downloads.iter().any(|(s, e)| {
+                prefetch_start >= *s && prefetch_start <= *e
+            });
+            
+            if !already_downloading {
+                prefetch_ranges.push((prefetch_start, prefetch_end));
+                downloads.push((prefetch_start, prefetch_end));
+            }
+        }
+        
+        // Add current download to tracking
+        downloads.push((start, start + chunk_size - 1));
+        
+        // Clean up old downloads (keep only recent ones)
+        downloads.retain(|(s, _)| start.saturating_sub(*s) < self.prefetch_size * 2);
+        
+        prefetch_ranges
+    }
+
+    fn mark_completed(&self, url: &str, start: u64, end: u64) {
+        let mut active = self.active_downloads.lock().unwrap();
+        if let Some(downloads) = active.get_mut(url) {
+            downloads.retain(|(s, e)| !(*s == start && *e == end));
+        }
+    }
+}
 
 impl Default for ProxyConfig {
     fn default() -> Self {
@@ -148,6 +224,9 @@ impl Default for ProxyConfig {
             adaptive_chunking: false,
             min_chunk_size: default_min_chunk_size(),
             max_chunk_size: default_max_chunk_size(),
+            parallel_downloads: false,
+            max_concurrent_chunks: default_max_concurrent_chunks(),
+            prefetch_ahead: default_prefetch_ahead(),
         }
     }
 }
@@ -260,16 +339,21 @@ impl Config {
 
     fn generate_example_config() -> Result<(), Box<dyn std::error::Error>> {
         let example_config = r#"# mpv-http-ytproxy configuration file
-# Performance-optimized configuration with human-readable sizes
+# Performance-optimized configuration with human-readable sizes and parallel downloads
 
 [proxy]
 port = 12081
-chunk_size = "10MB"      # Default: 10MB for optimal balance (10,485,760 bytes)
+chunk_size = "10MB"          # Default: 10MB for optimal balance
 cert_file = "cert.pem"
 key_file = "key.pem"
 adaptive_chunking = false
-min_chunk_size = "2.5MB"  # Minimum chunk size (2,621,440 bytes)
-max_chunk_size = "40MB"   # Maximum chunk size (41,943,040 bytes)
+min_chunk_size = "2.5MB"     # Minimum chunk size
+max_chunk_size = "40MB"      # Maximum chunk size
+
+# Parallel Download Settings (v0.5.0+)
+parallel_downloads = false   # Enable intelligent prefetching
+max_concurrent_chunks = 2    # Max parallel chunk downloads
+prefetch_ahead = "20MB"      # Prefetch buffer size
 
 [security]
 cert_validity_days = 365
@@ -279,7 +363,7 @@ level = "info"
 log_timing = false
 
 [performance]
-http2 = true             # HTTP/2 enabled by default for better performance
+http2 = true                 # HTTP/2 enabled by default for better performance
 connection_pool_size = 10
 request_timeout = 30
 
@@ -287,6 +371,11 @@ request_timeout = 30
 # - Numbers: 1024, 10485760 
 # - With units: 10KB, 10MB, 1GB, 2TB
 # - Short units: 10K, 10M, 1G, 2T
+
+# Parallel Downloads:
+# - Enable for faster seeking and better buffering
+# - Adjust max_concurrent_chunks based on connection speed
+# - Increase prefetch_ahead for smoother playback
 "#;
         
         fs::write("config.example.toml", example_config)?;
@@ -324,7 +413,9 @@ request_timeout = 30
 }
 
 
-fn mitm(mut req: Request<Body>, mut third_wheel: ThirdWheel, http_chunk_size: u64) -> <ThirdWheel as Service<Request<Body>>>::Future {
+fn mitm(mut req: Request<Body>, mut third_wheel: ThirdWheel, http_chunk_size: u64, download_manager: Arc<ParallelDownloadManager>) -> <ThirdWheel as Service<Request<Body>>>::Future {
+    // Get URL for download tracking before borrowing headers
+    let url = req.uri().to_string();
     let hdr = req.headers_mut();
     
     // Only process Range headers for optimization
@@ -363,6 +454,15 @@ fn mitm(mut req: Request<Body>, mut third_wheel: ThirdWheel, http_chunk_size: u6
                                     hdr.insert("Range", header_val);
                                     eprintln!("Range chunked: {} -> {} (chunk size: {})", 
                                              range_string, newrange, http_chunk_size);
+                                    
+                                    // Check for parallel prefetch opportunities
+                                    let prefetch_ranges = download_manager.should_prefetch(&url, start, http_chunk_size);
+                                    if !prefetch_ranges.is_empty() {
+                                        eprintln!("Parallel prefetch: {} ranges queued for {}", 
+                                                 prefetch_ranges.len(), url);
+                                        // Note: Actual prefetch implementation would require async context
+                                        // For now, we're logging the intention
+                                    }
                                 } else {
                                     eprintln!("Warning: Failed to create header value for: {}", newrange);
                                 }
@@ -425,8 +525,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 config.proxy.cert_file, config.proxy.key_file, e)
     })?;
     
+    // Initialize parallel download manager
+    let download_manager = Arc::new(ParallelDownloadManager::new(
+        config.proxy.max_concurrent_chunks,
+        config.proxy.prefetch_ahead,
+        config.proxy.parallel_downloads,
+    ));
+    
+    if config.proxy.parallel_downloads {
+        println!("Parallel downloads enabled: max {} concurrent chunks, {}MB prefetch buffer", 
+                 config.proxy.max_concurrent_chunks,
+                 config.proxy.prefetch_ahead / 1024 / 1024);
+    }
+    
     let chunk_size = config.proxy.chunk_size;
-    let trivial_mitm = mitm_layer(move |req, tw| mitm(req, tw, chunk_size));
+    let dm_clone = download_manager.clone();
+    let trivial_mitm = mitm_layer(move |req, tw| mitm(req, tw, chunk_size, dm_clone.clone()));
     let mitm_proxy = MitmProxy::builder(trivial_mitm, ca).build();
     
     // Better error handling for binding

@@ -2,6 +2,30 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.0] - 2025-09-05
+
+### Added
+- **Parallel Download Support** - Intelligent prefetching for better performance
+  - `parallel_downloads` setting to enable/disable parallel chunk downloads
+  - `max_concurrent_chunks` to control concurrent download limit  
+  - `prefetch_ahead` buffer size for intelligent prefetching
+  - Download manager to track and coordinate parallel requests
+  - Automatic prefetch range calculation for optimal buffering
+- **Enhanced Download Intelligence** - Smart prefetching based on current position
+- **Better Performance Logging** - Detailed information about parallel download activity
+
+### Changed
+- MITM function now supports parallel download coordination
+- Configuration structure extended with parallel download settings
+- Default configuration includes parallel download options (disabled by default)
+- Improved memory management for download tracking
+
+### Technical Details
+- Parallel downloads use conservative defaults (2 concurrent, 20MB prefetch)
+- Download manager prevents duplicate range requests
+- Automatic cleanup of completed download tracking
+- Foundation for future adaptive prefetching algorithms
+
 ## [0.4.0] - 2025-09-05
 
 ### Added

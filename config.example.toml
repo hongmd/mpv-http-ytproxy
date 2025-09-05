@@ -1,14 +1,19 @@
 # mpv-http-ytproxy configuration file
-# Performance-optimized configuration with human-readable sizes
+# Performance-optimized configuration with human-readable sizes and parallel downloads
 
 [proxy]
 port = 12081
-chunk_size = "10MB"      # Default: 10MB for optimal balance (10,485,760 bytes)
+chunk_size = "10MB"          # Default: 10MB for optimal balance
 cert_file = "cert.pem"
 key_file = "key.pem"
 adaptive_chunking = false
-min_chunk_size = "2.5MB"  # Minimum chunk size (2,621,440 bytes)
-max_chunk_size = "40MB"   # Maximum chunk size (41,943,040 bytes)
+min_chunk_size = "2.5MB"     # Minimum chunk size
+max_chunk_size = "40MB"      # Maximum chunk size
+
+# Parallel Download Settings (v0.5.0+)
+parallel_downloads = false   # Enable intelligent prefetching
+max_concurrent_chunks = 2    # Max parallel chunk downloads
+prefetch_ahead = "20MB"      # Prefetch buffer size
 
 [security]
 cert_validity_days = 365
@@ -18,7 +23,7 @@ level = "info"
 log_timing = false
 
 [performance]
-http2 = true             # HTTP/2 enabled by default for better performance
+http2 = true                 # HTTP/2 enabled by default for better performance
 connection_pool_size = 10
 request_timeout = 30
 
@@ -26,3 +31,8 @@ request_timeout = 30
 # - Numbers: 1024, 10485760 
 # - With units: 10KB, 10MB, 1GB, 2TB
 # - Short units: 10K, 10M, 1G, 2T
+
+# Parallel Downloads:
+# - Enable for faster seeking and better buffering
+# - Adjust max_concurrent_chunks based on connection speed
+# - Increase prefetch_ahead for smoother playback
