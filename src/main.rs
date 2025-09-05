@@ -1,14 +1,14 @@
 use argh::FromArgs;
-use serde::{Deserialize, Serialize, Deserializer};
+use serde::{Deserialize, Deserializer, Serialize};
+use std::collections::{HashMap, VecDeque};
 use std::env;
 use std::fs;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
-use std::collections::{HashMap, VecDeque};
 use std::time::Instant;
-use third_wheel::hyper::{Request, Body};
 use third_wheel::hyper::http::HeaderValue;
 use third_wheel::hyper::service::Service;
+use third_wheel::hyper::{Body, Request};
 use third_wheel::*;
 
 // Custom deserializer for human-readable sizes (e.g., "10MB", "50MB", "1GB")
@@ -24,7 +24,7 @@ where
     }
 
     let value = SizeValue::deserialize(deserializer)?;
-    
+
     match value {
         SizeValue::Number(n) => Ok(n),
         SizeValue::String(s) => parse_size(&s).map_err(serde::de::Error::custom),
@@ -33,11 +33,11 @@ where
 
 fn parse_size(input: &str) -> Result<u64, String> {
     let input = input.trim().to_uppercase();
-    
+
     if let Ok(num) = input.parse::<u64>() {
         return Ok(num);
     }
-    
+
     let (number_part, unit_part) = if input.ends_with("KB") {
         (input.trim_end_matches("KB"), "KB")
     } else if input.ends_with("MB") {
@@ -55,12 +55,17 @@ fn parse_size(input: &str) -> Result<u64, String> {
     } else if input.ends_with("T") {
         (input.trim_end_matches("T"), "T")
     } else {
-        return Err(format!("Invalid size format: {}. Use formats like '10MB', '50MB', '1GB'", input));
+        return Err(format!(
+            "Invalid size format: {}. Use formats like '10MB', '50MB', '1GB'",
+            input
+        ));
     };
-    
-    let number: f64 = number_part.trim().parse()
+
+    let number: f64 = number_part
+        .trim()
+        .parse()
         .map_err(|_| format!("Invalid number in size: {}", input))?;
-    
+
     let multiplier = match unit_part {
         "KB" | "K" => 1_024,
         "MB" | "M" => 1_024 * 1_024,
@@ -68,11 +73,11 @@ fn parse_size(input: &str) -> Result<u64, String> {
         "TB" | "T" => 1_024_u64.pow(4),
         _ => return Err(format!("Unknown unit: {}", unit_part)),
     };
-    
+
     Ok((number * multiplier as f64) as u64)
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, Default)]
 struct Config {
     #[serde(default)]
     proxy: ProxyConfig,
@@ -96,15 +101,24 @@ struct ProxyConfig {
     key_file: String,
     #[serde(default)]
     adaptive_chunking: bool,
-    #[serde(default = "default_min_chunk_size", deserialize_with = "deserialize_size")]
+    #[serde(
+        default = "default_min_chunk_size",
+        deserialize_with = "deserialize_size"
+    )]
     min_chunk_size: u64,
-    #[serde(default = "default_max_chunk_size", deserialize_with = "deserialize_size")]
+    #[serde(
+        default = "default_max_chunk_size",
+        deserialize_with = "deserialize_size"
+    )]
     max_chunk_size: u64,
     #[serde(default)]
     parallel_downloads: bool,
     #[serde(default = "default_max_concurrent_chunks")]
     max_concurrent_chunks: u32,
-    #[serde(default = "default_prefetch_ahead", deserialize_with = "deserialize_size")]
+    #[serde(
+        default = "default_prefetch_ahead",
+        deserialize_with = "deserialize_size"
+    )]
     prefetch_ahead: u64,
     #[serde(default = "default_memory_pool_enabled")]
     memory_pool_enabled: bool,
@@ -137,20 +151,48 @@ struct PerformanceConfig {
 }
 
 // Default value functions
-fn default_port() -> u16 { 8080 }
-fn default_chunk_size() -> u64 { 10485760 } // 10MB
-fn default_cert_file() -> String { "cert.pem".to_string() }
-fn default_key_file() -> String { "key.pem".to_string() }
-fn default_min_chunk_size() -> u64 { 2621440 } // 2.5MB
-fn default_max_chunk_size() -> u64 { 41943040 } // 40MB
-fn default_cert_validity_days() -> u32 { 365 }
-fn default_log_level() -> String { "info".to_string() }
-fn default_connection_pool_size() -> u32 { 10 }
-fn default_request_timeout() -> u64 { 30 }
-fn default_http2() -> bool { true } // Enable HTTP/2 by default for better performance
-fn default_max_concurrent_chunks() -> u32 { 2 } // Conservative parallel downloads
-fn default_prefetch_ahead() -> u64 { 20971520 } // 20MB prefetch buffer
-fn default_memory_pool_enabled() -> bool { true } // Enable memory pooling by default
+fn default_port() -> u16 {
+    8080
+}
+fn default_chunk_size() -> u64 {
+    10485760
+} // 10MB
+fn default_cert_file() -> String {
+    "cert.pem".to_string()
+}
+fn default_key_file() -> String {
+    "key.pem".to_string()
+}
+fn default_min_chunk_size() -> u64 {
+    2621440
+} // 2.5MB
+fn default_max_chunk_size() -> u64 {
+    41943040
+} // 40MB
+fn default_cert_validity_days() -> u32 {
+    365
+}
+fn default_log_level() -> String {
+    "info".to_string()
+}
+fn default_connection_pool_size() -> u32 {
+    10
+}
+fn default_request_timeout() -> u64 {
+    30
+}
+fn default_http2() -> bool {
+    true
+} // Enable HTTP/2 by default for better performance
+fn default_max_concurrent_chunks() -> u32 {
+    2
+} // Conservative parallel downloads
+fn default_prefetch_ahead() -> u64 {
+    20971520
+} // 20MB prefetch buffer
+fn default_memory_pool_enabled() -> bool {
+    true
+} // Enable memory pooling by default
 
 // Memory Pool Management for efficient buffer reuse
 #[derive(Debug)]
@@ -166,12 +208,12 @@ struct BufferPool {
 impl BufferPool {
     fn new(buffer_size: usize, initial_count: usize, max_buffers: usize) -> Self {
         let mut buffers = VecDeque::new();
-        
+
         // Pre-allocate buffers for immediate use
         for _ in 0..initial_count {
             buffers.push_back(vec![0u8; buffer_size]);
         }
-        
+
         Self {
             available_buffers: Arc::new(Mutex::new(buffers)),
             buffer_size,
@@ -181,10 +223,10 @@ impl BufferPool {
             pool_misses: Arc::new(Mutex::new(0)),
         }
     }
-    
+
     fn get_buffer(&self) -> Vec<u8> {
         let mut available = self.available_buffers.lock().unwrap();
-        
+
         if let Some(mut buffer) = available.pop_front() {
             // Reuse existing buffer - just clear and resize
             buffer.clear();
@@ -192,7 +234,7 @@ impl BufferPool {
             *self.pool_hits.lock().unwrap() += 1;
             return buffer;
         }
-        
+
         // Create new buffer if we haven't reached the limit
         let mut count = self.allocated_count.lock().unwrap();
         if *count < self.max_buffers {
@@ -207,7 +249,7 @@ impl BufferPool {
             self.get_buffer()
         }
     }
-    
+
     fn return_buffer(&self, buffer: Vec<u8>) {
         if buffer.capacity() >= self.buffer_size {
             let mut available = self.available_buffers.lock().unwrap();
@@ -217,7 +259,7 @@ impl BufferPool {
             // If pool is full, let the buffer be deallocated
         }
     }
-    
+
     fn get_stats(&self) -> (u64, u64, f64) {
         let hits = *self.pool_hits.lock().unwrap();
         let misses = *self.pool_misses.lock().unwrap();
@@ -232,39 +274,39 @@ impl BufferPool {
 
 #[derive(Debug)]
 struct ChunkDataPool {
-    small_chunks: BufferPool,   // 1-5MB chunks
-    medium_chunks: BufferPool,  // 5-20MB chunks  
-    large_chunks: BufferPool,   // 20MB+ chunks
+    small_chunks: BufferPool,  // 1-5MB chunks
+    medium_chunks: BufferPool, // 5-20MB chunks
+    large_chunks: BufferPool,  // 20MB+ chunks
     enabled: bool,
 }
 
 impl ChunkDataPool {
     fn new(enabled: bool) -> Self {
         Self {
-            small_chunks: BufferPool::new(5 * 1024 * 1024, 4, 16),    // 5MB x 16 max
-            medium_chunks: BufferPool::new(20 * 1024 * 1024, 2, 8),   // 20MB x 8 max  
-            large_chunks: BufferPool::new(50 * 1024 * 1024, 1, 4),    // 50MB x 4 max
+            small_chunks: BufferPool::new(5 * 1024 * 1024, 4, 16), // 5MB x 16 max
+            medium_chunks: BufferPool::new(20 * 1024 * 1024, 2, 8), // 20MB x 8 max
+            large_chunks: BufferPool::new(50 * 1024 * 1024, 1, 4), // 50MB x 4 max
             enabled,
         }
     }
-    
+
     fn get_buffer_for_size(&self, size: usize) -> Vec<u8> {
         if !self.enabled {
             return vec![0u8; size];
         }
-        
+
         match size {
-            0..=5_242_880 => self.small_chunks.get_buffer(),          // ≤ 5MB
+            0..=5_242_880 => self.small_chunks.get_buffer(), // ≤ 5MB
             5_242_881..=20_971_520 => self.medium_chunks.get_buffer(), // 5-20MB
-            _ => self.large_chunks.get_buffer(),                       // > 20MB
+            _ => self.large_chunks.get_buffer(),             // > 20MB
         }
     }
-    
+
     fn return_buffer(&self, buffer: Vec<u8>) {
         if !self.enabled {
             return;
         }
-        
+
         let size = buffer.capacity();
         match size {
             0..=5_242_880 => self.small_chunks.return_buffer(buffer),
@@ -272,27 +314,39 @@ impl ChunkDataPool {
             _ => self.large_chunks.return_buffer(buffer),
         }
     }
-    
+
     fn print_stats(&self) {
         if !self.enabled {
             return;
         }
-        
+
         let (small_hits, small_misses, small_rate) = self.small_chunks.get_stats();
         let (medium_hits, medium_misses, medium_rate) = self.medium_chunks.get_stats();
         let (large_hits, large_misses, large_rate) = self.large_chunks.get_stats();
-        
+
         println!("Memory Pool Stats:");
-        println!("  Small (≤5MB): {} hits, {} misses, {:.1}% hit rate", small_hits, small_misses, small_rate);
-        println!("  Medium (5-20MB): {} hits, {} misses, {:.1}% hit rate", medium_hits, medium_misses, medium_rate);
-        println!("  Large (>20MB): {} hits, {} misses, {:.1}% hit rate", large_hits, large_misses, large_rate);
+        println!(
+            "  Small (≤5MB): {} hits, {} misses, {:.1}% hit rate",
+            small_hits, small_misses, small_rate
+        );
+        println!(
+            "  Medium (5-20MB): {} hits, {} misses, {:.1}% hit rate",
+            medium_hits, medium_misses, medium_rate
+        );
+        println!(
+            "  Large (>20MB): {} hits, {} misses, {:.1}% hit rate",
+            large_hits, large_misses, large_rate
+        );
     }
 }
+
+// Type alias for complex download tracking
+type DownloadTracker = Arc<Mutex<HashMap<String, Vec<(u64, u64)>>>>;
 
 // Parallel download manager for intelligent prefetching with memory pooling
 #[derive(Debug)]
 struct ParallelDownloadManager {
-    active_downloads: Arc<Mutex<HashMap<String, Vec<(u64, u64)>>>>, // URL -> [(start, end), ...]
+    active_downloads: DownloadTracker, // URL -> [(start, end), ...]
     max_concurrent: u32,
     prefetch_size: u64,
     enabled: bool,
@@ -301,7 +355,12 @@ struct ParallelDownloadManager {
 }
 
 impl ParallelDownloadManager {
-    fn new(max_concurrent: u32, prefetch_size: u64, enabled: bool, memory_pool_enabled: bool) -> Self {
+    fn new(
+        max_concurrent: u32,
+        prefetch_size: u64,
+        enabled: bool,
+        memory_pool_enabled: bool,
+    ) -> Self {
         Self {
             active_downloads: Arc::new(Mutex::new(HashMap::new())),
             max_concurrent,
@@ -315,11 +374,11 @@ impl ParallelDownloadManager {
     fn get_download_buffer(&self, _url: &str, size: usize) -> Vec<u8> {
         self.chunk_pool.get_buffer_for_size(size)
     }
-    
+
     fn return_download_buffer(&self, buffer: Vec<u8>) {
         // Return to pool
         self.chunk_pool.return_buffer(buffer);
-        
+
         // Print stats periodically (every 30 seconds)
         let mut timer = self.stats_timer.lock().unwrap();
         let now = Instant::now();
@@ -335,44 +394,38 @@ impl ParallelDownloadManager {
         }
 
         let mut active = self.active_downloads.lock().unwrap();
-        let downloads = active.entry(url.to_string()).or_insert_with(Vec::new);
-        
+        let downloads = active.entry(url.to_string()).or_default();
+
         // Check if we should prefetch next chunks
         let mut prefetch_ranges = Vec::new();
         let current_end = start + chunk_size;
-        
+
         // Calculate how many chunks to prefetch ahead
-        let chunks_to_prefetch = (self.prefetch_size / chunk_size).min(self.max_concurrent as u64 - 1);
-        
+        let chunks_to_prefetch =
+            (self.prefetch_size / chunk_size).min(self.max_concurrent as u64 - 1);
+
         for i in 1..=chunks_to_prefetch {
             let prefetch_start = current_end + (i - 1) * chunk_size;
             let prefetch_end = prefetch_start + chunk_size - 1;
-            
+
             // Check if this range is not already being downloaded
-            let already_downloading = downloads.iter().any(|(s, e)| {
-                prefetch_start >= *s && prefetch_start <= *e
-            });
-            
+            let already_downloading = downloads
+                .iter()
+                .any(|(s, e)| prefetch_start >= *s && prefetch_start <= *e);
+
             if !already_downloading {
                 prefetch_ranges.push((prefetch_start, prefetch_end));
                 downloads.push((prefetch_start, prefetch_end));
             }
         }
-        
+
         // Add current download to tracking
         downloads.push((start, start + chunk_size - 1));
-        
+
         // Clean up old downloads (keep only recent ones)
         downloads.retain(|(s, _)| start.saturating_sub(*s) < self.prefetch_size * 2);
-        
-        prefetch_ranges
-    }
 
-    fn mark_completed(&self, url: &str, start: u64, end: u64) {
-        let mut active = self.active_downloads.lock().unwrap();
-        if let Some(downloads) = active.get_mut(url) {
-            downloads.retain(|(s, e)| !(*s == start && *e == end));
-        }
+        prefetch_ranges
     }
 }
 
@@ -419,17 +472,6 @@ impl Default for PerformanceConfig {
             http2: default_http2(),
             connection_pool_size: default_connection_pool_size(),
             request_timeout: default_request_timeout(),
-        }
-    }
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            proxy: ProxyConfig::default(),
-            security: SecurityConfig::default(),
-            logging: LoggingConfig::default(),
-            performance: PerformanceConfig::default(),
         }
     }
 }
@@ -494,7 +536,8 @@ impl Config {
     }
 
     fn get_passphrase(&self) -> String {
-        self.security.passphrase
+        self.security
+            .passphrase
             .clone()
             .or_else(|| env::var("YTPROXY_PASSPHRASE").ok())
             .unwrap_or_else(|| "third-wheel".to_string())
@@ -545,7 +588,7 @@ request_timeout = 30
 # - Adjust max_concurrent_chunks based on connection speed
 # - Increase prefetch_ahead for smoother playback
 "#;
-        
+
         fs::write("config.example.toml", example_config)?;
         println!("Generated example configuration at 'config.example.toml'");
         println!("Copy to 'config.toml' and modify as needed.");
@@ -580,22 +623,26 @@ request_timeout = 30
     }
 }
 
-
-fn mitm(mut req: Request<Body>, mut third_wheel: ThirdWheel, http_chunk_size: u64, download_manager: Arc<ParallelDownloadManager>) -> <ThirdWheel as Service<Request<Body>>>::Future {
+fn mitm(
+    mut req: Request<Body>,
+    mut third_wheel: ThirdWheel,
+    http_chunk_size: u64,
+    download_manager: Arc<ParallelDownloadManager>,
+) -> <ThirdWheel as Service<Request<Body>>>::Future {
     // Get URL for download tracking before borrowing headers
     let url = req.uri().to_string();
     let hdr = req.headers_mut();
-    
+
     // Only process Range headers for optimization
     if let Some(val) = hdr.get("Range") {
         // Safely convert header value to string and clone it to avoid borrow issues
         if let Ok(range) = val.to_str() {
             let range_string = range.to_string();
-            
+
             // Parse Range header: bytes=start-end or bytes=start-
-            if range_string.starts_with("bytes=") {
-                let range_part = &range_string[6..]; // Remove "bytes=" prefix
-                
+            if let Some(range_part) = range_string.strip_prefix("bytes=") {
+                // Remove "bytes=" prefix
+
                 if let Some((start_str, end_str)) = range_part.split_once('-') {
                     if let Ok(start) = start_str.parse::<u64>() {
                         // Determine if we should modify this range
@@ -610,54 +657,76 @@ fn mitm(mut req: Request<Body>, mut third_wheel: ThirdWheel, http_chunk_size: u6
                             // Invalid end value - skip
                             false
                         };
-                        
+
                         if should_modify {
                             // Calculate new end position
                             if let Some(new_end) = start.checked_add(http_chunk_size) {
                                 let new_end_byte = new_end.saturating_sub(1);
                                 let newrange = format!("bytes={}-{}", start, new_end_byte);
-                                
+
                                 // Safely create header value
                                 if let Ok(header_val) = HeaderValue::from_str(&newrange) {
                                     hdr.insert("Range", header_val);
-                                    eprintln!("Range chunked: {} -> {} (chunk size: {})", 
-                                             range_string, newrange, http_chunk_size);
-                                    
+                                    eprintln!(
+                                        "Range chunked: {} -> {} (chunk size: {})",
+                                        range_string, newrange, http_chunk_size
+                                    );
+
                                     // Demonstrate memory pool usage for this chunk size
                                     let chunk_size_bytes = http_chunk_size as usize;
-                                    let _demo_buffer = download_manager.get_download_buffer(&url, chunk_size_bytes);
-                                    eprintln!("Memory Pool: Allocated {}MB buffer for {}", 
-                                             chunk_size_bytes / 1024 / 1024, url);
-                                    
+                                    let _demo_buffer = download_manager
+                                        .get_download_buffer(&url, chunk_size_bytes);
+                                    eprintln!(
+                                        "Memory Pool: Allocated {}MB buffer for {}",
+                                        chunk_size_bytes / 1024 / 1024,
+                                        url
+                                    );
+
                                     // Return buffer immediately (in real usage, this would happen after download)
                                     download_manager.return_download_buffer(_demo_buffer);
-                                    
+
                                     // Check for parallel prefetch opportunities
-                                    let prefetch_ranges = download_manager.should_prefetch(&url, start, http_chunk_size);
+                                    let prefetch_ranges = download_manager.should_prefetch(
+                                        &url,
+                                        start,
+                                        http_chunk_size,
+                                    );
                                     if !prefetch_ranges.is_empty() {
-                                        eprintln!("Parallel prefetch: {} ranges queued for {}", 
-                                                 prefetch_ranges.len(), url);
-                                        
+                                        eprintln!(
+                                            "Parallel prefetch: {} ranges queued for {}",
+                                            prefetch_ranges.len(),
+                                            url
+                                        );
+
                                         // Demonstrate memory pool for prefetch buffers
                                         for (pf_start, pf_end) in &prefetch_ranges {
                                             let pf_size = (pf_end - pf_start + 1) as usize;
-                                            let _pf_buffer = download_manager.get_download_buffer(&url, pf_size);
+                                            let _pf_buffer =
+                                                download_manager.get_download_buffer(&url, pf_size);
                                             eprintln!("Memory Pool: Prefetch buffer {}MB allocated for range {}-{}", 
                                                      pf_size / 1024 / 1024, pf_start, pf_end);
                                             download_manager.return_download_buffer(_pf_buffer);
                                         }
                                     }
                                 } else {
-                                    eprintln!("Warning: Failed to create header value for: {}", newrange);
+                                    eprintln!(
+                                        "Warning: Failed to create header value for: {}",
+                                        newrange
+                                    );
                                 }
                             } else {
-                                eprintln!("Warning: Range overflow detected, skipping modification");
+                                eprintln!(
+                                    "Warning: Range overflow detected, skipping modification"
+                                );
                             }
                         } else {
                             eprintln!("Range unchanged: {} (already optimal)", range_string);
                         }
                     } else {
-                        eprintln!("Warning: Invalid start value in Range header: {}", range_string);
+                        eprintln!(
+                            "Warning: Invalid start value in Range header: {}",
+                            range_string
+                        );
                     }
                 } else {
                     eprintln!("Warning: Malformed Range header: {}", range_string);
@@ -667,48 +736,53 @@ fn mitm(mut req: Request<Body>, mut third_wheel: ThirdWheel, http_chunk_size: u6
             eprintln!("Warning: Invalid UTF-8 in Range header, skipping modification");
         }
     }
-    
+
     third_wheel.call(req)
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: StartMitm = argh::from_env();
-    
+
     // Handle config generation
     if args.generate_config {
         return Config::generate_example_config();
     }
-    
+
     // Load configuration
     let config = Config::load_config(&args)?;
-    
+
     println!("Starting HTTP YouTube Proxy on port {}", config.proxy.port);
     println!("Chunk size: {} bytes", config.proxy.chunk_size);
-    
+
     if config.proxy.adaptive_chunking {
-        println!("Adaptive chunking enabled: {}-{} bytes", 
-                config.proxy.min_chunk_size, config.proxy.max_chunk_size);
+        println!(
+            "Adaptive chunking enabled: {}-{} bytes",
+            config.proxy.min_chunk_size, config.proxy.max_chunk_size
+        );
     }
-    
+
     // Validate chunk size
     if config.proxy.chunk_size == 0 {
         return Err("Chunk size must be greater than 0".into());
     }
-    
+
     // Get passphrase
     let passphrase = config.get_passphrase();
-    
+
     // Load CA with better error handling
     let ca = CertificateAuthority::load_from_pem_files_with_passphrase_on_key(
         &config.proxy.cert_file,
         &config.proxy.key_file,
         &passphrase,
-    ).map_err(|e| {
-        format!("Failed to load certificates from '{}' and '{}': {}", 
-                config.proxy.cert_file, config.proxy.key_file, e)
+    )
+    .map_err(|e| {
+        format!(
+            "Failed to load certificates from '{}' and '{}': {}",
+            config.proxy.cert_file, config.proxy.key_file, e
+        )
     })?;
-    
+
     // Initialize parallel download manager with memory pooling
     let download_manager = Arc::new(ParallelDownloadManager::new(
         config.proxy.max_concurrent_chunks,
@@ -716,40 +790,49 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         config.proxy.parallel_downloads,
         config.proxy.memory_pool_enabled,
     ));
-    
+
     if config.proxy.parallel_downloads {
-        println!("Parallel downloads enabled: max {} concurrent chunks, {}MB prefetch buffer", 
-                 config.proxy.max_concurrent_chunks,
-                 config.proxy.prefetch_ahead / 1024 / 1024);
+        println!(
+            "Parallel downloads enabled: max {} concurrent chunks, {}MB prefetch buffer",
+            config.proxy.max_concurrent_chunks,
+            config.proxy.prefetch_ahead / 1024 / 1024
+        );
     }
-    
+
     if config.proxy.memory_pool_enabled {
         println!("Memory pool enabled: efficient buffer reuse for better performance");
     }
-    
+
     let chunk_size = config.proxy.chunk_size;
     let dm_clone = download_manager.clone();
     let trivial_mitm = mitm_layer(move |req, tw| mitm(req, tw, chunk_size, dm_clone.clone()));
     let mitm_proxy = MitmProxy::builder(trivial_mitm, ca).build();
-    
+
     // Better error handling for binding
     let bind_addr = format!("127.0.0.1:{}", config.proxy.port);
-    let socket_addr = bind_addr.parse()
+    let socket_addr = bind_addr
+        .parse()
         .map_err(|e| format!("Invalid bind address '{}': {}", bind_addr, e))?;
-    
+
     let (_, mitm_proxy_fut) = mitm_proxy.bind(socket_addr);
-    
+
     println!("Proxy listening on {}", bind_addr);
-    println!("Configuration loaded: {} logging, {} performance features", 
-             config.logging.level, 
-             if config.performance.http2 { "HTTP/2" } else { "HTTP/1.1" });
+    println!(
+        "Configuration loaded: {} logging, {} performance features",
+        config.logging.level,
+        if config.performance.http2 {
+            "HTTP/2"
+        } else {
+            "HTTP/1.1"
+        }
+    );
     println!("Press Ctrl+C to stop");
-    
+
     // Handle the proxy future with proper error handling
     if let Err(e) = mitm_proxy_fut.await {
         eprintln!("Proxy error: {}", e);
         return Err(format!("Proxy failed: {}", e).into());
     }
-    
+
     Ok(())
 }

@@ -1,4 +1,4 @@
-# mpv-http-ytproxy v0.4.0
+# mpv-http-ytproxy v0.6.0
 
 A high-performance HTTP MITM proxy specifically designed to optimize YouTube streaming in mpv by intelligently modifying Range headers for better buffering and seeking performance.
 
@@ -94,7 +94,7 @@ mpv --script-opts=http-ytproxy=no "https://youtube.com/..."
 The proxy supports TOML configuration files with human-readable size formats:
 
 ```toml
-# Supported size formats (v0.4.0+):
+# Supported size formats (v0.6.0+):
 chunk_size = "10MB"     # Human-readable (default)
 chunk_size = 10485760   # Raw bytes (still supported)
 
