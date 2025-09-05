@@ -1,5 +1,5 @@
 # mpv-http-ytproxy configuration file
-# Performance-optimized configuration with human-readable sizes and parallel downloads
+# Performance-optimized configuration with human-readable sizes, parallel downloads, and memory pooling
 
 [proxy]
 port = 12081
@@ -14,6 +14,9 @@ max_chunk_size = "40MB"      # Maximum chunk size
 parallel_downloads = false   # Enable intelligent prefetching
 max_concurrent_chunks = 2    # Max parallel chunk downloads
 prefetch_ahead = "20MB"      # Prefetch buffer size
+
+# Memory Pool Settings (v0.6.0+)
+memory_pool_enabled = true   # Enable buffer reuse for better performance
 
 [security]
 cert_validity_days = 365
@@ -32,7 +35,9 @@ request_timeout = 30
 # - With units: 10KB, 10MB, 1GB, 2TB
 # - Short units: 10K, 10M, 1G, 2T
 
-# Parallel Downloads:
-# - Enable for faster seeking and better buffering
+# Performance Features:
+# - Parallel Downloads: Enable for faster seeking and better buffering
+# - Memory Pool: Reuses buffers to reduce allocation overhead
+# - HTTP/2: Improved connection efficiency for YouTube streaming
 # - Adjust max_concurrent_chunks based on connection speed
 # - Increase prefetch_ahead for smoother playback

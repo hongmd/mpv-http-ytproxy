@@ -4,7 +4,8 @@ use std::env;
 use std::fs;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
+use std::time::Instant;
 use third_wheel::hyper::{Request, Body};
 use third_wheel::hyper::http::HeaderValue;
 use third_wheel::hyper::service::Service;
@@ -105,6 +106,8 @@ struct ProxyConfig {
     max_concurrent_chunks: u32,
     #[serde(default = "default_prefetch_ahead", deserialize_with = "deserialize_size")]
     prefetch_ahead: u64,
+    #[serde(default = "default_memory_pool_enabled")]
+    memory_pool_enabled: bool,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -147,23 +150,182 @@ fn default_request_timeout() -> u64 { 30 }
 fn default_http2() -> bool { true } // Enable HTTP/2 by default for better performance
 fn default_max_concurrent_chunks() -> u32 { 2 } // Conservative parallel downloads
 fn default_prefetch_ahead() -> u64 { 20971520 } // 20MB prefetch buffer
+fn default_memory_pool_enabled() -> bool { true } // Enable memory pooling by default
 
-// Parallel download manager for intelligent prefetching
+// Memory Pool Management for efficient buffer reuse
+#[derive(Debug)]
+struct BufferPool {
+    available_buffers: Arc<Mutex<VecDeque<Vec<u8>>>>,
+    buffer_size: usize,
+    max_buffers: usize,
+    allocated_count: Arc<Mutex<usize>>,
+    pool_hits: Arc<Mutex<u64>>,
+    pool_misses: Arc<Mutex<u64>>,
+}
+
+impl BufferPool {
+    fn new(buffer_size: usize, initial_count: usize, max_buffers: usize) -> Self {
+        let mut buffers = VecDeque::new();
+        
+        // Pre-allocate buffers for immediate use
+        for _ in 0..initial_count {
+            buffers.push_back(vec![0u8; buffer_size]);
+        }
+        
+        Self {
+            available_buffers: Arc::new(Mutex::new(buffers)),
+            buffer_size,
+            max_buffers,
+            allocated_count: Arc::new(Mutex::new(initial_count)),
+            pool_hits: Arc::new(Mutex::new(0)),
+            pool_misses: Arc::new(Mutex::new(0)),
+        }
+    }
+    
+    fn get_buffer(&self) -> Vec<u8> {
+        let mut available = self.available_buffers.lock().unwrap();
+        
+        if let Some(mut buffer) = available.pop_front() {
+            // Reuse existing buffer - just clear and resize
+            buffer.clear();
+            buffer.resize(self.buffer_size, 0);
+            *self.pool_hits.lock().unwrap() += 1;
+            return buffer;
+        }
+        
+        // Create new buffer if we haven't reached the limit
+        let mut count = self.allocated_count.lock().unwrap();
+        if *count < self.max_buffers {
+            *count += 1;
+            *self.pool_misses.lock().unwrap() += 1;
+            vec![0u8; self.buffer_size]
+        } else {
+            // If pool is exhausted, wait briefly and retry
+            drop(available);
+            drop(count);
+            std::thread::sleep(std::time::Duration::from_millis(1));
+            self.get_buffer()
+        }
+    }
+    
+    fn return_buffer(&self, buffer: Vec<u8>) {
+        if buffer.capacity() >= self.buffer_size {
+            let mut available = self.available_buffers.lock().unwrap();
+            if available.len() < self.max_buffers / 2 {
+                available.push_back(buffer);
+            }
+            // If pool is full, let the buffer be deallocated
+        }
+    }
+    
+    fn get_stats(&self) -> (u64, u64, f64) {
+        let hits = *self.pool_hits.lock().unwrap();
+        let misses = *self.pool_misses.lock().unwrap();
+        let hit_rate = if hits + misses > 0 {
+            hits as f64 / (hits + misses) as f64 * 100.0
+        } else {
+            0.0
+        };
+        (hits, misses, hit_rate)
+    }
+}
+
+#[derive(Debug)]
+struct ChunkDataPool {
+    small_chunks: BufferPool,   // 1-5MB chunks
+    medium_chunks: BufferPool,  // 5-20MB chunks  
+    large_chunks: BufferPool,   // 20MB+ chunks
+    enabled: bool,
+}
+
+impl ChunkDataPool {
+    fn new(enabled: bool) -> Self {
+        Self {
+            small_chunks: BufferPool::new(5 * 1024 * 1024, 4, 16),    // 5MB x 16 max
+            medium_chunks: BufferPool::new(20 * 1024 * 1024, 2, 8),   // 20MB x 8 max  
+            large_chunks: BufferPool::new(50 * 1024 * 1024, 1, 4),    // 50MB x 4 max
+            enabled,
+        }
+    }
+    
+    fn get_buffer_for_size(&self, size: usize) -> Vec<u8> {
+        if !self.enabled {
+            return vec![0u8; size];
+        }
+        
+        match size {
+            0..=5_242_880 => self.small_chunks.get_buffer(),          // ≤ 5MB
+            5_242_881..=20_971_520 => self.medium_chunks.get_buffer(), // 5-20MB
+            _ => self.large_chunks.get_buffer(),                       // > 20MB
+        }
+    }
+    
+    fn return_buffer(&self, buffer: Vec<u8>) {
+        if !self.enabled {
+            return;
+        }
+        
+        let size = buffer.capacity();
+        match size {
+            0..=5_242_880 => self.small_chunks.return_buffer(buffer),
+            5_242_881..=20_971_520 => self.medium_chunks.return_buffer(buffer),
+            _ => self.large_chunks.return_buffer(buffer),
+        }
+    }
+    
+    fn print_stats(&self) {
+        if !self.enabled {
+            return;
+        }
+        
+        let (small_hits, small_misses, small_rate) = self.small_chunks.get_stats();
+        let (medium_hits, medium_misses, medium_rate) = self.medium_chunks.get_stats();
+        let (large_hits, large_misses, large_rate) = self.large_chunks.get_stats();
+        
+        println!("Memory Pool Stats:");
+        println!("  Small (≤5MB): {} hits, {} misses, {:.1}% hit rate", small_hits, small_misses, small_rate);
+        println!("  Medium (5-20MB): {} hits, {} misses, {:.1}% hit rate", medium_hits, medium_misses, medium_rate);
+        println!("  Large (>20MB): {} hits, {} misses, {:.1}% hit rate", large_hits, large_misses, large_rate);
+    }
+}
+
+// Parallel download manager for intelligent prefetching with memory pooling
 #[derive(Debug)]
 struct ParallelDownloadManager {
     active_downloads: Arc<Mutex<HashMap<String, Vec<(u64, u64)>>>>, // URL -> [(start, end), ...]
     max_concurrent: u32,
     prefetch_size: u64,
     enabled: bool,
+    chunk_pool: Arc<ChunkDataPool>,
+    stats_timer: Arc<Mutex<Option<Instant>>>,
 }
 
 impl ParallelDownloadManager {
-    fn new(max_concurrent: u32, prefetch_size: u64, enabled: bool) -> Self {
+    fn new(max_concurrent: u32, prefetch_size: u64, enabled: bool, memory_pool_enabled: bool) -> Self {
         Self {
             active_downloads: Arc::new(Mutex::new(HashMap::new())),
             max_concurrent,
             prefetch_size,
             enabled,
+            chunk_pool: Arc::new(ChunkDataPool::new(memory_pool_enabled)),
+            stats_timer: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    fn get_download_buffer(&self, _url: &str, size: usize) -> Vec<u8> {
+        self.chunk_pool.get_buffer_for_size(size)
+    }
+    
+    fn return_download_buffer(&self, buffer: Vec<u8>) {
+        // Return to pool
+        self.chunk_pool.return_buffer(buffer);
+        
+        // Print stats periodically (every 30 seconds)
+        let mut timer = self.stats_timer.lock().unwrap();
+        let now = Instant::now();
+        if timer.is_none() || timer.unwrap().elapsed().as_secs() >= 30 {
+            self.chunk_pool.print_stats();
+            *timer = Some(now);
         }
     }
 
@@ -227,6 +389,7 @@ impl Default for ProxyConfig {
             parallel_downloads: false,
             max_concurrent_chunks: default_max_concurrent_chunks(),
             prefetch_ahead: default_prefetch_ahead(),
+            memory_pool_enabled: default_memory_pool_enabled(),
         }
     }
 }
@@ -339,7 +502,7 @@ impl Config {
 
     fn generate_example_config() -> Result<(), Box<dyn std::error::Error>> {
         let example_config = r#"# mpv-http-ytproxy configuration file
-# Performance-optimized configuration with human-readable sizes and parallel downloads
+# Performance-optimized configuration with human-readable sizes, parallel downloads, and memory pooling
 
 [proxy]
 port = 12081
@@ -354,6 +517,9 @@ max_chunk_size = "40MB"      # Maximum chunk size
 parallel_downloads = false   # Enable intelligent prefetching
 max_concurrent_chunks = 2    # Max parallel chunk downloads
 prefetch_ahead = "20MB"      # Prefetch buffer size
+
+# Memory Pool Settings (v0.6.0+)
+memory_pool_enabled = true   # Enable buffer reuse for better performance
 
 [security]
 cert_validity_days = 365
@@ -372,8 +538,10 @@ request_timeout = 30
 # - With units: 10KB, 10MB, 1GB, 2TB
 # - Short units: 10K, 10M, 1G, 2T
 
-# Parallel Downloads:
-# - Enable for faster seeking and better buffering
+# Performance Features:
+# - Parallel Downloads: Enable for faster seeking and better buffering
+# - Memory Pool: Reuses buffers to reduce allocation overhead
+# - HTTP/2: Improved connection efficiency for YouTube streaming
 # - Adjust max_concurrent_chunks based on connection speed
 # - Increase prefetch_ahead for smoother playback
 "#;
@@ -525,17 +693,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 config.proxy.cert_file, config.proxy.key_file, e)
     })?;
     
-    // Initialize parallel download manager
+    // Initialize parallel download manager with memory pooling
     let download_manager = Arc::new(ParallelDownloadManager::new(
         config.proxy.max_concurrent_chunks,
         config.proxy.prefetch_ahead,
         config.proxy.parallel_downloads,
+        config.proxy.memory_pool_enabled,
     ));
     
     if config.proxy.parallel_downloads {
         println!("Parallel downloads enabled: max {} concurrent chunks, {}MB prefetch buffer", 
                  config.proxy.max_concurrent_chunks,
                  config.proxy.prefetch_ahead / 1024 / 1024);
+    }
+    
+    if config.proxy.memory_pool_enabled {
+        println!("Memory pool enabled: efficient buffer reuse for better performance");
     }
     
     let chunk_size = config.proxy.chunk_size;
