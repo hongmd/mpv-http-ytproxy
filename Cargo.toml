@@ -1,12 +1,22 @@
-# To generate mitm cert and key:
-# openssl req -x509 -newkey rsa:4096 -keyout key.pem -out cert.pem -days 365 -passout pass:"third-wheel" -subj "/C=US/ST=private/L=province/O=city/CN=hostname.example.com"
-# see: https://github.com/campbellC/third-wheel
+# HTTP YouTube Proxy for mpv
+# Optimizes YouTube streaming by modifying Range headers for better performance
+# 
+# To generate MITM cert and key:
+# openssl req -x509 -newkey rsa:4096 -keyout key.pem -out cert.pem -days 365 \
+#   -passout pass:"third-wheel" \
+#   -subj "/C=US/ST=Local/L=Local/O=mpv-ytproxy/CN=localhost" \
+#   -addext "subjectAltName=DNS:localhost,IP:127.0.0.1"
+# 
+# See: https://github.com/campbellC/third-wheel
 
 [package]
 name = "http-ytproxy"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
-
+authors = ["mpv-http-ytproxy contributors"]
+description = "HTTP MITM proxy for optimizing YouTube streaming in mpv"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/hongmd/mpv-http-ytproxy"
 
 [dependencies]
 third-wheel = "0.6"
@@ -14,3 +24,11 @@ argh = "0.1"
 
 [dependencies.tokio]
 version = "1"
+features = ["full"]
+
+# Optimize for release builds
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"

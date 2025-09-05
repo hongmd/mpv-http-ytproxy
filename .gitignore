@@ -1,0 +1,23 @@
+# Rust
+/target/
+Cargo.lock
+
+# Certificates (generated locally)
+*.pem
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Backup files
+*.bak
+*.backup
