@@ -4,11 +4,13 @@ A high-performance HTTP MITM proxy specifically designed to optimize YouTube str
 
 ## 🚀 Features
 
-- **Smart Range Header Modification**: Automatically chunks video requests into optimal sizes (default: 10MB)
+- **Smart Range Header Modification**: Automatically chunks video requests into optimal sizes (configurable: 2.5MB - 50MB)
+- **Configuration File Support**: TOML-based configuration with CLI override support
 - **Automatic YouTube Detection**: Only activates for YouTube/Yewtu.be/Invidious URLs
 - **Seamless mpv Integration**: Zero-configuration auto-activation via Lua script
 - **Enhanced Seeking**: Dramatically improves video seeking performance
 - **Reduced Buffering**: Minimizes playback interruptions
+- **Adaptive Chunking Ready**: Foundation for future intelligent chunk sizing
 - **Security-Conscious**: Localhost-only binding with proper error handling
 
 ## 📋 Requirements
@@ -75,9 +77,46 @@ mpv --script-opts=http-ytproxy=no "https://youtube.com/..."
 # Run proxy manually with custom settings
 ./http-ytproxy --help
 ./http-ytproxy -p 8080 -r 20971520  # Port 8080, 20MB chunks
+
+# Generate example configuration
+./http-ytproxy --generate-config
+
+# Use custom config file
+./http-ytproxy --config /path/to/config.toml
 ```
 
 ## ⚙️ Configuration
+
+### Configuration File (Recommended)
+
+The proxy supports TOML configuration files for easy customization:
+
+```toml
+# ~/.config/mpv/scripts/http-ytproxy/config.toml
+
+[proxy]
+port = 12081
+chunk_size = 20971520        # 20MB for better performance
+cert_file = "cert.pem"
+key_file = "key.pem"
+adaptive_chunking = true     # Future feature
+min_chunk_size = 5242880     # 5MB minimum
+max_chunk_size = 52428800    # 50MB maximum
+
+[security]
+# passphrase = "custom-pass"  # Override default
+cert_validity_days = 365
+
+[logging]
+level = "info"               # error, warn, info, debug
+log_timing = false
+
+[performance]
+http2 = false                # Future feature
+connection_pool_size = 10
+request_timeout = 30
+enable_compression = false   # Future feature
+```
 
 ### mpv.conf Options
 

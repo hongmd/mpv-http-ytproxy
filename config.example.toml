@@ -1,0 +1,25 @@
+# mpv-http-ytproxy configuration file
+# Place this file as 'config.toml' in the same directory as the binary
+# or specify with --config /path/to/config.toml
+
+[proxy]
+port = 8080
+chunk_size = 10485760
+cert_file = "cert.pem"
+key_file = "key.pem"
+adaptive_chunking = false
+min_chunk_size = 2621440
+max_chunk_size = 41943040
+
+[security]
+cert_validity_days = 365
+
+[logging]
+level = "info"
+log_timing = false
+
+[performance]
+http2 = false
+connection_pool_size = 10
+request_timeout = 30
+enable_compression = false

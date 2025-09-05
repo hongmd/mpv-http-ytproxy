@@ -88,6 +88,45 @@ if ! cp main.lua "$scriptdir/"; then
     error_exit "Failed to copy Lua script"
 fi
 
+# Generate example config if not exists
+if [[ ! -f "$scriptdir/config.toml" ]]; then
+    echo -e "${GREEN}Generating example configuration...${NC}"
+    if ! ./target/release/http-ytproxy --generate-config; then
+        echo -e "${YELLOW}Warning: Could not generate config, using basic template${NC}"
+        cat > config.example.toml << 'EOF'
+# mpv-http-ytproxy configuration file
+[proxy]
+port = 12081
+chunk_size = 10485760
+cert_file = "cert.pem"
+key_file = "key.pem"
+adaptive_chunking = false
+min_chunk_size = 2621440
+max_chunk_size = 41943040
+
+[security]
+cert_validity_days = 365
+
+[logging]
+level = "info"
+log_timing = false
+
+[performance]
+http2 = false
+connection_pool_size = 10
+request_timeout = 30
+enable_compression = false
+EOF
+    fi
+    
+    if [[ -f "config.example.toml" ]]; then
+        cp config.example.toml "$scriptdir/config.toml"
+        echo -e "${GREEN}Configuration file created at ${scriptdir}/config.toml${NC}"
+    fi
+else
+    echo -e "${YELLOW}Configuration file already exists, keeping current settings${NC}"
+fi
+
 # Make binary executable
 chmod +x "$scriptdir/http-ytproxy"
 

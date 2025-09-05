@@ -100,12 +100,12 @@ local function init()
 
     mp.msg.info("Starting HTTP YouTube proxy on port " .. proxy_port)
 
-    -- launch mitm proxy
+        -- launch mitm proxy
     local args = {
         binary_path,
         "-c", cert_path,
         "-k", key_path,
-        "-r", "10485760", -- range modification (10MB chunks)
+        "--config", script_dir .. "/config.toml",
         "-p", proxy_port
     }
     
