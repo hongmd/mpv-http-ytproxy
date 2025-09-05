@@ -1,5 +1,5 @@
 use argh::FromArgs;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, Deserializer};
 use std::env;
 use std::fs;
 use std::path::Path;
@@ -7,6 +7,67 @@ use third_wheel::hyper::{Request, Body};
 use third_wheel::hyper::http::HeaderValue;
 use third_wheel::hyper::service::Service;
 use third_wheel::*;
+
+// Custom deserializer for human-readable sizes (e.g., "10MB", "50MB", "1GB")
+fn deserialize_size<'de, D>(deserializer: D) -> Result<u64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum SizeValue {
+        Number(u64),
+        String(String),
+    }
+
+    let value = SizeValue::deserialize(deserializer)?;
+    
+    match value {
+        SizeValue::Number(n) => Ok(n),
+        SizeValue::String(s) => parse_size(&s).map_err(serde::de::Error::custom),
+    }
+}
+
+fn parse_size(input: &str) -> Result<u64, String> {
+    let input = input.trim().to_uppercase();
+    
+    if let Ok(num) = input.parse::<u64>() {
+        return Ok(num);
+    }
+    
+    let (number_part, unit_part) = if input.ends_with("KB") {
+        (input.trim_end_matches("KB"), "KB")
+    } else if input.ends_with("MB") {
+        (input.trim_end_matches("MB"), "MB")
+    } else if input.ends_with("GB") {
+        (input.trim_end_matches("GB"), "GB")
+    } else if input.ends_with("TB") {
+        (input.trim_end_matches("TB"), "TB")
+    } else if input.ends_with("K") {
+        (input.trim_end_matches("K"), "K")
+    } else if input.ends_with("M") {
+        (input.trim_end_matches("M"), "M")
+    } else if input.ends_with("G") {
+        (input.trim_end_matches("G"), "G")
+    } else if input.ends_with("T") {
+        (input.trim_end_matches("T"), "T")
+    } else {
+        return Err(format!("Invalid size format: {}. Use formats like '10MB', '50MB', '1GB'", input));
+    };
+    
+    let number: f64 = number_part.trim().parse()
+        .map_err(|_| format!("Invalid number in size: {}", input))?;
+    
+    let multiplier = match unit_part {
+        "KB" | "K" => 1_024,
+        "MB" | "M" => 1_024 * 1_024,
+        "GB" | "G" => 1_024 * 1_024 * 1_024,
+        "TB" | "T" => 1_024_u64.pow(4),
+        _ => return Err(format!("Unknown unit: {}", unit_part)),
+    };
+    
+    Ok((number * multiplier as f64) as u64)
+}
 
 #[derive(Debug, Deserialize, Serialize)]
 struct Config {
@@ -24,7 +85,7 @@ struct Config {
 struct ProxyConfig {
     #[serde(default = "default_port")]
     port: u16,
-    #[serde(default = "default_chunk_size")]
+    #[serde(default = "default_chunk_size", deserialize_with = "deserialize_size")]
     chunk_size: u64,
     #[serde(default = "default_cert_file")]
     cert_file: String,
@@ -32,9 +93,9 @@ struct ProxyConfig {
     key_file: String,
     #[serde(default)]
     adaptive_chunking: bool,
-    #[serde(default = "default_min_chunk_size")]
+    #[serde(default = "default_min_chunk_size", deserialize_with = "deserialize_size")]
     min_chunk_size: u64,
-    #[serde(default = "default_max_chunk_size")]
+    #[serde(default = "default_max_chunk_size", deserialize_with = "deserialize_size")]
     max_chunk_size: u64,
 }
 
@@ -200,16 +261,36 @@ impl Config {
     }
 
     fn generate_example_config() -> Result<(), Box<dyn std::error::Error>> {
-        let config = Config::default();
-        let toml_string = toml::to_string_pretty(&config)?;
-        
-        let example_config = format!(
-            "# mpv-http-ytproxy configuration file\n\
-             # Place this file as 'config.toml' in the same directory as the binary\n\
-             # or specify with --config /path/to/config.toml\n\n\
-             {}", 
-            toml_string
-        );
+        let example_config = r#"# mpv-http-ytproxy configuration file
+# Performance-optimized configuration with human-readable sizes
+
+[proxy]
+port = 12081
+chunk_size = "10MB"      # Default: 10MB for optimal balance (10,485,760 bytes)
+cert_file = "cert.pem"
+key_file = "key.pem"
+adaptive_chunking = false
+min_chunk_size = "2.5MB"  # Minimum chunk size (2,621,440 bytes)
+max_chunk_size = "40MB"   # Maximum chunk size (41,943,040 bytes)
+
+[security]
+cert_validity_days = 365
+
+[logging]
+level = "info"
+log_timing = false
+
+[performance]
+http2 = false
+connection_pool_size = 10
+request_timeout = 30
+enable_compression = false
+
+# Size Format Examples:
+# - Numbers: 1024, 10485760 
+# - With units: 10KB, 10MB, 1GB, 2TB
+# - Short units: 10K, 10M, 1G, 2T
+"#;
         
         fs::write("config.example.toml", example_config)?;
         println!("Generated example configuration at 'config.example.toml'");

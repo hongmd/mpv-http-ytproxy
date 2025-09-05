@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.0] - 2025-09-05
+
+### Added
+- **Human-Readable Size Format** - Support for intuitive size notation in config
+  - Use `"50MB"`, `"1GB"`, `"512KB"` instead of byte numbers
+  - Support both long (`MB`, `GB`) and short (`M`, `G`) unit formats
+  - Backward compatible with numeric byte values
+  - Custom deserializer with comprehensive error handling
+- **Anti-Rate Limiting** - Default 10MB chunks with option to increase for faster connections
+- **Enhanced Documentation** - Clear examples of size format usage in config files
+
+### Changed
+- Default `chunk_size` set to 10MB for optimal balance of performance and bandwidth
+- Config files now use human-readable format by default
+- Improved config generation with user-friendly size examples
+
+### Fixed
+- YouTube HTTP 429 "Too Many Requests" errors through larger chunk sizes
+- Better balance between performance and API compliance
+
 ## [0.3.0] - 2025-09-05
 
 ### Added

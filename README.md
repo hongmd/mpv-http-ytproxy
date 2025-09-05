@@ -1,11 +1,13 @@
-# mpv-http-ytproxy
+# mpv-http-ytproxy v0.4.0
 
 A high-performance HTTP MITM proxy specifically designed to optimize YouTube streaming in mpv by intelligently modifying Range headers for better buffering and seeking performance.
 
 ## 🚀 Features
 
-- **Smart Range Header Modification**: Automatically chunks video requests into optimal sizes (configurable: 2.5MB - 50MB)
+- **Smart Range Header Modification**: Automatically chunks video requests into optimal sizes (default: 10MB, configurable)
+- **Human-Readable Configuration**: Use intuitive formats like `"50MB"`, `"1GB"` instead of byte numbers
 - **Configuration File Support**: TOML-based configuration with CLI override support
+- **Anti-Rate Limiting**: Optimized chunk sizes to prevent YouTube HTTP 429 errors
 - **Automatic YouTube Detection**: Only activates for YouTube/Yewtu.be/Invidious URLs
 - **Seamless mpv Integration**: Zero-configuration auto-activation via Lua script
 - **Enhanced Seeking**: Dramatically improves video seeking performance
@@ -89,19 +91,30 @@ mpv --script-opts=http-ytproxy=no "https://youtube.com/..."
 
 ### Configuration File (Recommended)
 
-The proxy supports TOML configuration files for easy customization:
+The proxy supports TOML configuration files with human-readable size formats:
+
+```toml
+# Supported size formats (v0.4.0+):
+chunk_size = "10MB"     # Human-readable (default)
+chunk_size = 10485760   # Raw bytes (still supported)
+
+# Units supported: KB, MB, GB, TB (or K, M, G, T)
+chunk_size = "50MB"     # 52,428,800 bytes
+chunk_size = "1GB"      # 1,073,741,824 bytes
+chunk_size = "512K"     # 524,288 bytes
+```
 
 ```toml
 # ~/.config/mpv/scripts/http-ytproxy/config.toml
 
 [proxy]
 port = 12081
-chunk_size = 20971520        # 20MB for better performance
+chunk_size = "10MB"          # ✅ Human-readable format (default)
 cert_file = "cert.pem"
 key_file = "key.pem"
 adaptive_chunking = true     # Future feature
-min_chunk_size = 5242880     # 5MB minimum
-max_chunk_size = 52428800    # 50MB maximum
+min_chunk_size = "5MB"       # ✅ 5MB minimum
+max_chunk_size = "100MB"     # ✅ 100MB maximum
 
 [security]
 # passphrase = "custom-pass"  # Override default

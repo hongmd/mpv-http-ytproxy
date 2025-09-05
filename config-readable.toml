@@ -1,0 +1,29 @@
+# mpv-http-ytproxy configuration file
+# Performance-optimized configuration with human-readable sizes
+
+[proxy]
+port = 12081
+chunk_size = "10MB"      # ✅ Human-readable: 10MB = 10,485,760 bytes
+cert_file = "cert.pem"
+key_file = "key.pem"
+adaptive_chunking = true
+min_chunk_size = "5MB"   # ✅ Minimum chunk size  
+max_chunk_size = "100MB" # ✅ Maximum chunk size
+
+[security]
+cert_validity_days = 365
+
+[logging]
+level = "info"
+log_timing = true
+
+[performance]
+http2 = true
+connection_pool_size = 10
+request_timeout = 30
+enable_compression = true
+
+# Supported size formats:
+# - Numbers: 1024, 52428800
+# - With units: 10KB, 50MB, 1GB, 2TB
+# - Short units: 10K, 50M, 1G, 2T

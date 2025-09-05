@@ -1,15 +1,14 @@
 # mpv-http-ytproxy configuration file
-# Place this file as 'config.toml' in the same directory as the binary
-# or specify with --config /path/to/config.toml
+# Performance-optimized configuration with human-readable sizes
 
 [proxy]
-port = 8080
-chunk_size = 10485760
+port = 12081
+chunk_size = "10MB"      # Default: 10MB for optimal balance (10,485,760 bytes)
 cert_file = "cert.pem"
 key_file = "key.pem"
 adaptive_chunking = false
-min_chunk_size = 2621440
-max_chunk_size = 41943040
+min_chunk_size = "2.5MB"  # Minimum chunk size (2,621,440 bytes)
+max_chunk_size = "40MB"   # Maximum chunk size (41,943,040 bytes)
 
 [security]
 cert_validity_days = 365
@@ -23,3 +22,8 @@ http2 = false
 connection_pool_size = 10
 request_timeout = 30
 enable_compression = false
+
+# Size Format Examples:
+# - Numbers: 1024, 10485760 
+# - With units: 10KB, 10MB, 1GB, 2TB
+# - Short units: 10K, 10M, 1G, 2T
