@@ -10,7 +10,7 @@ adaptive_chunking = false
 min_chunk_size = "2.5MB"     # Minimum chunk size
 max_chunk_size = "40MB"      # Maximum chunk size
 
-# Parallel Download Settings (v0.6.0+)
+# Parallel Download Settings (v0.5.0+)
 parallel_downloads = false   # Enable intelligent prefetching
 max_concurrent_chunks = 2    # Max parallel chunk downloads
 prefetch_ahead = "20MB"      # Prefetch buffer size
