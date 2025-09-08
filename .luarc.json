@@ -1,0 +1,13 @@
+{
+    "diagnostics": {
+        "globals": [
+            "mp"
+        ]
+    },
+    "workspace": {
+        "library": []
+    },
+    "runtime": {
+        "version": "LuaJIT"
+    }
+}
