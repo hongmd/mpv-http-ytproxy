@@ -77,6 +77,8 @@ struct Config {
     logging: LoggingConfig,
     #[serde(default)]
     performance: PerformanceConfig,
+    #[serde(default)]
+    websites: WebsitesConfig,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -140,15 +142,31 @@ struct PerformanceConfig {
     request_timeout: u64,
 }
 
+#[derive(Debug, Deserialize, Serialize)]
+struct WebsitesConfig {
+    #[serde(default = "default_youtube")]
+    youtube: bool,
+    #[serde(default = "default_youtube_alternatives")]
+    youtube_alternatives: bool,
+    #[serde(default)]
+    vimeo: bool,
+    #[serde(default)]
+    dailymotion: bool,
+    #[serde(default)]
+    twitch: bool,
+    #[serde(default)]
+    custom_domains: Vec<String>,
+}
+
 // Constants for better performance and maintainability
-const DEFAULT_PORT: u16 = 8080;
+const DEFAULT_PORT: u16 = 12081;  // Standard proxy port for mpv-http-ytproxy
 const DEFAULT_CHUNK_SIZE: u64 = 10 * 1024 * 1024; // 10MB
 const DEFAULT_MIN_CHUNK_SIZE: u64 = 2_621_440; // 2.5MB
 const DEFAULT_MAX_CHUNK_SIZE: u64 = 40 * 1024 * 1024; // 40MB
 const DEFAULT_CERT_VALIDITY_DAYS: u32 = 365;
 const DEFAULT_CONNECTION_POOL_SIZE: u32 = 10;
 const DEFAULT_REQUEST_TIMEOUT: u64 = 30;
-const DEFAULT_MAX_CONCURRENT_CHUNKS: u32 = 2;
+const DEFAULT_MAX_CONCURRENT_CHUNKS: u32 = 10;
 const DEFAULT_PREFETCH_AHEAD: u64 = 20 * 1024 * 1024; // 20MB
 
 // Default value functions using constants (with inlining for better performance)
@@ -208,6 +226,16 @@ fn default_prefetch_ahead() -> u64 {
 fn default_memory_pool_enabled() -> bool {
     true
 } // Enable memory pooling by default
+
+#[inline]
+fn default_youtube() -> bool {
+    true
+} // Enable YouTube by default
+
+#[inline]
+fn default_youtube_alternatives() -> bool {
+    true
+} // Enable YouTube alternatives by default
 
 // Memory Pool Management for efficient buffer reuse with optimized locking
 #[derive(Debug)]
@@ -491,6 +519,19 @@ impl Default for PerformanceConfig {
     }
 }
 
+impl Default for WebsitesConfig {
+    fn default() -> Self {
+        Self {
+            youtube: default_youtube(),
+            youtube_alternatives: default_youtube_alternatives(),
+            vimeo: false,
+            dailymotion: false,
+            twitch: false,
+            custom_domains: Vec::new(),
+        }
+    }
+}
+
 /// Run a TLS mitm proxy that modifies Range header to be http_chunk_size bytes.
 #[derive(FromArgs)]
 struct StartMitm {
@@ -521,6 +562,10 @@ struct StartMitm {
     /// generate example config file and exit
     #[argh(switch, long = "generate-config")]
     generate_config: bool,
+
+    /// test URL support with current configuration
+    #[argh(option, long = "test-url")]
+    test_url: Option<String>,
 }
 
 impl Config {
@@ -528,6 +573,46 @@ impl Config {
         let content = fs::read_to_string(path)?;
         let config: Config = toml::from_str(&content)?;
         Ok(config)
+    }
+
+    fn test_url_support(&self, url: &str) -> bool {
+        // YouTube support
+        if self.websites.youtube
+            && (url.contains("youtube.com") || url.contains("youtu.be"))
+        {
+            return true;
+        }
+
+        // YouTube alternatives
+        if self.websites.youtube_alternatives
+            && (url.contains("yewtu.be") || url.contains("invidio.us") || url.contains("piped.video"))
+        {
+            return true;
+        }
+
+        // Vimeo support
+        if self.websites.vimeo && url.contains("vimeo.com") {
+            return true;
+        }
+
+        // Dailymotion support
+        if self.websites.dailymotion && url.contains("dailymotion.com") {
+            return true;
+        }
+
+        // Twitch support
+        if self.websites.twitch && url.contains("twitch.tv") {
+            return true;
+        }
+
+        // Custom domains
+        for domain in &self.websites.custom_domains {
+            if url.contains(domain) {
+                return true;
+            }
+        }
+
+        false
     }
 
     fn merge_with_cli_args(mut self, args: &StartMitm) -> Self {
@@ -573,7 +658,7 @@ max_chunk_size = "40MB"      # Maximum chunk size
 
 # Parallel Download Settings (v0.5.0+)
 parallel_downloads = false   # Enable intelligent prefetching
-max_concurrent_chunks = 2    # Max parallel chunk downloads
+max_concurrent_chunks = 10   # Max parallel chunk downloads
 prefetch_ahead = "20MB"      # Prefetch buffer size
 
 # Memory Pool Settings (v0.6.0+)
@@ -590,6 +675,16 @@ log_timing = false
 http2 = true                 # HTTP/2 enabled by default for better performance
 connection_pool_size = 10
 request_timeout = 30
+
+# Supported Websites Configuration
+[websites]
+# Enable/disable proxy for specific website categories
+youtube = true               # YouTube (youtube.com, youtu.be)
+youtube_alternatives = true  # Yewtu.be, Invidious, Piped
+vimeo = false               # Vimeo.com
+dailymotion = false         # Dailymotion.com
+twitch = false              # Twitch.tv
+custom_domains = []         # Add custom domains: ["example.com", "video.site.com"]
 
 # Size Format Examples:
 # - Numbers: 1024, 10485760 
@@ -766,6 +861,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Load configuration
     let config = Config::load_config(&args)?;
+
+    // Handle URL testing
+    if let Some(ref test_url) = args.test_url {
+        println!("Testing URL support: {}", test_url);
+        println!("Configuration:");
+        println!("  YouTube: {}", config.websites.youtube);
+        println!("  YouTube alternatives: {}", config.websites.youtube_alternatives);
+        println!("  Vimeo: {}", config.websites.vimeo);
+        println!("  Dailymotion: {}", config.websites.dailymotion);
+        println!("  Twitch: {}", config.websites.twitch);
+        println!("  Custom domains: {:?}", config.websites.custom_domains);
+        println!("  Max concurrent chunks: {}", config.proxy.max_concurrent_chunks);
+        
+        let is_supported = config.test_url_support(test_url);
+        println!("Result: {} - {}", 
+                 if is_supported { "✅ SUPPORTED" } else { "❌ NOT SUPPORTED" },
+                 test_url);
+        return Ok(());
+    }
 
     println!("Starting HTTP YouTube Proxy on port {}", config.proxy.port);
     println!("Chunk size: {} bytes", config.proxy.chunk_size);

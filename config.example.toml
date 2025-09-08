@@ -12,7 +12,7 @@ max_chunk_size = "40MB"      # Maximum chunk size
 
 # Parallel Download Settings (v0.5.0+)
 parallel_downloads = false   # Enable intelligent prefetching
-max_concurrent_chunks = 2    # Max parallel chunk downloads
+max_concurrent_chunks = 10   # Max parallel chunk downloads
 prefetch_ahead = "20MB"      # Prefetch buffer size
 
 # Memory Pool Settings (v0.6.0+)
@@ -29,6 +29,16 @@ log_timing = false
 http2 = true                 # HTTP/2 enabled by default for better performance
 connection_pool_size = 10
 request_timeout = 30
+
+# Supported Websites Configuration
+[websites]
+# Enable/disable proxy for specific website categories
+youtube = true               # YouTube (youtube.com, youtu.be)
+youtube_alternatives = true  # Yewtu.be, Invidious, Piped
+vimeo = false               # Vimeo.com
+dailymotion = false         # Dailymotion.com
+twitch = false              # Twitch.tv
+custom_domains = []         # Add custom domains: ["example.com", "video.site.com"]
 
 # Size Format Examples:
 # - Numbers: 1024, 10485760 

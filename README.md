@@ -1,6 +1,6 @@
-# mpv-http-ytproxy v0.6.0
+# mpv-http-ytproxy v0.7.0
 
-A high-performance HTTP MITM proxy specifically designed to optimize YouTube streaming in mpv by intelligently modifying Range headers for better buffering and seeking performance.
+A high-performance HTTP MITM proxy specifically designed to optimize video streaming in mpv by intelligently modifying Range headers for better buffering and seeking performance.
 
 ## 🚀 Features
 
@@ -8,7 +8,7 @@ A high-performance HTTP MITM proxy specifically designed to optimize YouTube str
 - **Human-Readable Configuration**: Use intuitive formats like `"50MB"`, `"1GB"` instead of byte numbers
 - **Configuration File Support**: TOML-based configuration with CLI override support
 - **Anti-Rate Limiting**: Optimized chunk sizes to prevent YouTube HTTP 429 errors
-- **Automatic YouTube Detection**: Only activates for YouTube/Yewtu.be/Invidious URLs
+- **Configurable Website Support**: Enable/disable proxy for specific websites (YouTube, Vimeo, Dailymotion, Twitch, custom domains)
 - **Seamless mpv Integration**: Zero-configuration auto-activation via Lua script
 - **Enhanced Seeking**: Dramatically improves video seeking performance
 - **Reduced Buffering**: Minimizes playback interruptions
@@ -78,14 +78,75 @@ mpv --script-opts=http-ytproxy=no "https://youtube.com/..."
 ```bash
 # Run proxy manually with custom settings
 ./http-ytproxy --help
-./http-ytproxy -p 8080 -r 20971520  # Port 8080, 20MB chunks
+./http-ytproxy -p 12081 -r 20971520  # Port 12081, 20MB chunks
 
 # Generate example configuration
 ./http-ytproxy --generate-config
 
 # Use custom config file
 ./http-ytproxy --config /path/to/config.toml
+
+# Test URL support with current configuration
+./http-ytproxy --test-url "https://vimeo.com/12345"
 ```
+
+## 🌐 Website Configuration
+
+**NEW in v0.6.1**: Configure which websites are supported by the proxy.
+
+### Supported Websites
+
+Add a `[websites]` section to your `config.toml`:
+
+```toml
+[websites]
+# Enable/disable proxy for specific website categories
+youtube = true               # YouTube (youtube.com, youtu.be)
+youtube_alternatives = true  # Yewtu.be, Invidious, Piped
+vimeo = false               # Vimeo.com
+dailymotion = false         # Dailymotion.com
+twitch = false              # Twitch.tv
+custom_domains = []         # Add custom domains: ["example.com", "video.site.com"]
+```
+
+### Testing URL Support
+
+```bash
+# Test if a URL is supported with current config
+./http-ytproxy --test-url "https://youtube.com/watch?v=test"
+./http-ytproxy --config config.toml --test-url "https://vimeo.com/12345"
+```
+
+### Examples
+
+```toml
+# YouTube only (default behavior)
+[websites]
+youtube = true
+youtube_alternatives = true
+vimeo = false
+dailymotion = false
+twitch = false
+
+# Enable all major video platforms
+[websites]
+youtube = true
+youtube_alternatives = true
+vimeo = true
+dailymotion = true
+twitch = true
+
+# Custom domains only
+[websites]
+youtube = false
+youtube_alternatives = false
+vimeo = false
+dailymotion = false
+twitch = false
+custom_domains = ["internal-video.company.com", "streaming.mysite.org"]
+```
+
+See [WEBSITE_CONFIG.md](WEBSITE_CONFIG.md) for detailed configuration guide.
 
 ## ⚙️ Configuration
 

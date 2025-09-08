@@ -2,26 +2,136 @@
 local proxy_process = nil
 local proxy_port = "12081"
 
--- Better URL validation for YouTube/Yewtu.be
-local function is_youtube_url(url)
+-- Load website configuration from config file
+local function load_website_config()
+    local script_dir = mp.get_script_directory()
+    local config_path = script_dir .. "/config.toml"
+    
+    -- Default configuration
+    local config = {
+        youtube = true,
+        youtube_alternatives = true,
+        vimeo = false,
+        dailymotion = false,
+        twitch = false,
+        custom_domains = {}
+    }
+    
+    -- Try to parse config file (simplified TOML parsing)
+    local f = io.open(config_path, "r")
+    if f then
+        local success, content = pcall(function() return f:read("*all") end)
+        pcall(function() f:close() end)
+        
+        if success and content then
+            -- Find [websites] section start
+            local websites_start = content:find("%[websites%]")
+            if websites_start then
+                -- Get text after [websites] section
+                local after_websites = content:sub(websites_start)
+                
+                -- Parse boolean values with error handling
+                for key, value in after_websites:gmatch("(%w+)%s*=%s*(%w+)") do
+                    if key == "youtube" or key == "youtube_alternatives" or 
+                       key == "vimeo" or key == "dailymotion" or key == "twitch" then
+                        config[key] = (value:lower() == "true")
+                    end
+                end
+                
+                -- Parse custom_domains with error handling
+                local domains_line = after_websites:match("custom_domains%s*=%s*%[([^%]]+)%]")
+                if domains_line then
+                    config.custom_domains = {}
+                    for domain in domains_line:gmatch('"([^"]+)"') do
+                        -- Basic domain validation
+                        if domain and #domain > 0 and not domain:match("^%s*$") then
+                            table.insert(config.custom_domains, domain)
+                        end
+                    end
+                end
+            else
+                -- Debug: Log if websites section not found
+                -- print("DEBUG: [websites] section not found in config")
+            end
+        end
+    else
+        -- Debug: Log if config file not found  
+        -- print("DEBUG: Config file not found: " .. config_path)
+    end
+    
+    return config
+end
+
+-- Enhanced URL validation with configurable website support
+local function is_supported_url(url, config)
     if not url or type(url) ~= "string" then
         return false
     end
     
-    local youtube_patterns = {
-        "^https://[%w%-%.]*youtube%.com/",
-        "^https://[%w%-%.]*youtu%.be/",
-        "^https://[%w%-%.]*yewtu%.be/",
-        "^https://[%w%-%.]*invidio%.us/",
-        "^https://[%w%-%.]*piped%.video/"
-    }
+    -- YouTube patterns
+    if config.youtube then
+        local youtube_patterns = {
+            "^https://[%w%-%.]*youtube%.com/",
+            "^https://[%w%-%.]*youtu%.be/"
+        }
+        for _, pattern in ipairs(youtube_patterns) do
+            if url:match(pattern) then
+                return true
+            end
+        end
+    end
     
-    for _, pattern in ipairs(youtube_patterns) do
-        if url:match(pattern) then
+    -- YouTube alternatives
+    if config.youtube_alternatives then
+        local alt_patterns = {
+            "^https://[%w%-%.]*yewtu%.be/",
+            "^https://[%w%-%.]*invidio%.us/",
+            "^https://[%w%-%.]*piped%.video/"
+        }
+        for _, pattern in ipairs(alt_patterns) do
+            if url:match(pattern) then
+                return true
+            end
+        end
+    end
+    
+    -- Vimeo
+    if config.vimeo and url:match("^https://[%w%-%.]*vimeo%.com/") then
+        return true
+    end
+    
+    -- Dailymotion
+    if config.dailymotion and url:match("^https://[%w%-%.]*dailymotion%.com/") then
+        return true
+    end
+    
+    -- Twitch
+    if config.twitch and url:match("^https://[%w%-%.]*twitch%.tv/") then
+        return true
+    end
+    
+    -- Custom domains
+    for _, domain in ipairs(config.custom_domains) do
+        -- Simple string.find is more reliable than complex pattern matching
+        if url:find(domain, 1, true) then  -- plain text search
             return true
         end
     end
+    
     return false
+end
+
+-- Better URL validation for YouTube/Yewtu.be (kept for backward compatibility)
+local function is_youtube_url(url)
+    local config = {
+        youtube = true,
+        youtube_alternatives = true,
+        vimeo = false,
+        dailymotion = false,
+        twitch = false,
+        custom_domains = {}
+    }
+    return is_supported_url(url, config)
 end
 
 -- Cleanup function to stop proxy and restore settings
@@ -48,12 +158,15 @@ local function init()
 
     local url = mp.get_property("stream-open-filename")
     
-    -- Better YouTube URL validation
-    if not is_youtube_url(url) then
+    -- Load website configuration
+    local website_config = load_website_config()
+    
+    -- Check if URL is supported based on configuration
+    if not is_supported_url(url, website_config) then
         return
     end
     
-    mp.msg.info("YouTube URL detected: " .. url)
+    mp.msg.info("Supported video URL detected: " .. url)
 
     local proxy = mp.get_property("http-proxy")
     local ytdl_raw_options = mp.get_property("ytdl-raw-options")
@@ -78,11 +191,11 @@ local function init()
     local cert_path = script_dir .. "/cert.pem"
     local key_path = script_dir .. "/key.pem"
     
-    -- Validate required files exist (basic check)
+    -- Validate required files exist (improved error handling)
     local function file_exists(path)
         local f = io.open(path, "r")
         if f then
-            f:close()
+            local success = pcall(function() f:close() end)
             return true
         end
         return false
